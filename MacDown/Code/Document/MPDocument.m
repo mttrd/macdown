@@ -27,10 +27,12 @@
 #import "MPEditorPreferencesViewController.h"
 #import "MPExportPanelAccessoryViewController.h"
 #import "MPMathJaxListener.h"
+#import "MPGithubExportPaneViewController.h"
 
 
 static NSString * const kMPRendersTOCPropertyKey = @"Renders TOC";
 static NSString * const kMPDefaultAutosaveName = @"Untitled";
+NSString* const kGitPath = @"/usr/bin/git";
 
 
 NS_INLINE NSString *MPEditorPreferenceKeyWithValueKey(NSString *key)
@@ -1041,6 +1043,55 @@ static void (^MPGetPreviewLoadingCompletionHandler(MPDocument *doc))()
         };
         [self printDocumentWithSettings:settings showPrintPanel:NO delegate:nil
                        didPrintSelector:NULL contextInfo:NULL];
+    }];
+}
+
+- (IBAction)exportGitHub:(id)sender {
+    NSSavePanel *panel = [NSSavePanel savePanel];
+    panel.allowedFileTypes = @[@"md", @"markdown"];
+    if (self.presumedFileName)
+        panel.nameFieldStringValue = self.presumedFileName;
+    
+    MPGithubExportPaneViewController *controller =
+    [[MPGithubExportPaneViewController alloc] init];
+    panel.accessoryView = controller.view;
+    
+    NSWindow *w = self.windowForSheet;
+    [panel beginSheetModalForWindow:w completionHandler:^(NSInteger result) {
+        if (result != NSFileHandlingPanelOKButton)
+            return;
+        
+        [self writeSafelyToURL:panel.URL ofType:@"md" forSaveOperation:NSSaveOperation error:nil];
+        
+        NSString *dir = [panel.URL.path stringByDeletingLastPathComponent];
+        NSString *filename = [panel.URL.path lastPathComponent];
+       
+        NSTask *gitAddTask = [[NSTask alloc] init];
+        [gitAddTask setCurrentDirectoryPath:dir];
+        [gitAddTask setLaunchPath:kGitPath];
+        [gitAddTask setArguments:@[@"add", filename]];
+        [gitAddTask launch];
+        [gitAddTask waitUntilExit];
+        
+        NSTask *gitCommitTask = [[NSTask alloc] init];
+        [gitCommitTask setCurrentDirectoryPath:dir];
+        [gitCommitTask setLaunchPath:kGitPath];
+        [gitCommitTask setArguments:@[@"commit", @"-m", [NSString stringWithFormat:@"\"%@\"", controller.commitMessageTextField.stringValue]]];
+        [gitCommitTask launch];
+        [gitCommitTask waitUntilExit];
+        
+        NSTask *gitPushTask = [[NSTask alloc] init];
+        [gitPushTask setCurrentDirectoryPath:dir];
+        [gitPushTask setLaunchPath:kGitPath];
+        [gitPushTask setArguments:@[@"push", @"origin", controller.branchTextField.stringValue]];
+        [gitPushTask launch];
+        [gitPushTask waitUntilExit];
+        
+        if (gitPushTask.terminationStatus != 0) {
+            NSAlert *alert = [[NSAlert alloc] init];
+            alert.messageText = @"Something went wrong. Make sure you used a valid branch";
+            [alert beginSheetModalForWindow:w completionHandler:nil];
+        }
     }];
 }
 
